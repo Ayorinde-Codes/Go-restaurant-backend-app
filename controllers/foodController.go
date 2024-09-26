@@ -24,6 +24,22 @@ func GetFoods() gin.HandlerFunc {
 
 		var ctx, cancel = context.WithTimeout(context.Background(), 100*time.Second)
 
+		// Todo: Add pagination
+		// recordPerPage, err := strconv.Atoi(c.Query("recordPerPage"))
+
+		// if err != nil || recordPerPage < 1 {
+		// 	recordPerPage = 10
+		// }
+
+		// page, err := strconv.Atoi(c.Query("page"))
+
+		// if err != nil || page < 1{
+		// 	page = 1
+		// }
+
+		// startIndex := (page - 1) * recordPerPage
+		// startIndex, err = strconv.Atoi(c.Query("startIndex"))
+
 		result, err := foodCollection.Find(context.TODO(), bson.M{})
 
 		defer cancel()
@@ -83,8 +99,13 @@ func CreateFood() gin.HandlerFunc {
 			c.JSON(http.StatusNotFound, gin.H{"error": msg})
 			return
 		}
-		food.Created_at, _ = time.Parse(time.RFC3339, time.Now()).Format(time.RFC3339)
-		food.Updated_at, _ = time.Parse(time.RFC3339, time.Now()).Format(time.RFC3339)
+
+		// now := time.Now()
+
+		// food.Created_at = now
+		// food.Updated_at = now
+		food.Created_at, _ = time.Parse(time.RFC3339, time.Now().Format(time.RFC3339))
+		food.Updated_at, _ = time.Parse(time.RFC3339, time.Now().Format(time.RFC3339))
 		food.ID = primitive.NewObjectID()
 		food.Food_id = food.ID.Hex()
 		var num = toFixed(*food.Price, 2)
@@ -112,5 +133,20 @@ func toFixed(num float64, precision int) float64 {
 
 func UpdateFood() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		var ctx, cancel = context.WithTimeout(context.Background(), 100*time.Second)
+		foodId := c.Param("food_id")
+		var food models.Food
+
+		if err := c.BindJSON(&food); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+
+		err := foodCollection.FindOne(ctx, bson.M{"food_id": foodId}).Decode(&food)
+		defer cancel()
+
+		if err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Food item not found"})
+		}
 	}
 }
