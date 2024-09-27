@@ -7,6 +7,7 @@ import (
 	"golang-restaurant-backend-app/models"
 	"log"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -21,39 +22,58 @@ var validate = validator.New()
 
 func GetFoods() gin.HandlerFunc {
 	return func(c *gin.Context) {
-
 		var ctx, cancel = context.WithTimeout(context.Background(), 100*time.Second)
-
-		// Todo: Add pagination
-		// recordPerPage, err := strconv.Atoi(c.Query("recordPerPage"))
-
-		// if err != nil || recordPerPage < 1 {
-		// 	recordPerPage = 10
-		// }
-
-		// page, err := strconv.Atoi(c.Query("page"))
-
-		// if err != nil || page < 1{
-		// 	page = 1
-		// }
-
-		// startIndex := (page - 1) * recordPerPage
-		// startIndex, err = strconv.Atoi(c.Query("startIndex"))
-
-		result, err := foodCollection.Find(context.TODO(), bson.M{})
-
 		defer cancel()
 
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		// Pagination parameters
+		recordPerPage, err := strconv.Atoi(c.Query("recordPerPage"))
+		if err != nil || recordPerPage < 1 {
+			recordPerPage = 10
 		}
 
-		var allFood []bson.M
+		page, err := strconv.Atoi(c.Query("page"))
+		if err != nil || page < 1 {
+			page = 1
+		}
 
-		if err = result.All(ctx, &allFood); err != nil {
+		startIndex := (page - 1) * recordPerPage
+
+		// MongoDB aggregation pipeline stages
+		matchStage := bson.D{{Key: "$match", Value: bson.D{}}}
+		groupStage := bson.D{{Key: "$group", Value: bson.D{
+			{Key: "_id", Value: nil},
+			{Key: "total_count", Value: bson.D{{Key: "$sum", Value: 1}}},
+			{Key: "data", Value: bson.D{{Key: "$push", Value: "$$ROOT"}}},
+		}}}
+		projectStage := bson.D{{Key: "$project", Value: bson.D{
+			{Key: "_id", Value: 0},
+			{Key: "total_count", Value: 1},
+			{Key: "food_items", Value: bson.D{
+				{Key: "$slice", Value: []interface{}{"$data", startIndex, recordPerPage}},
+			}},
+		}}}
+
+		// Perform aggregation
+		result, err := foodCollection.Aggregate(ctx, mongo.Pipeline{
+			matchStage, groupStage, projectStage,
+		})
+
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Error fetching foods"})
+			return // Exit early if aggregation fails
+		}
+
+		var allFoods []bson.M
+		if err = result.All(ctx, &allFoods); err != nil {
 			log.Fatal(err)
 		}
-		c.JSON(http.StatusOK, allFood)
+
+		// Return response
+		if len(allFoods) > 0 {
+			c.JSON(http.StatusOK, allFoods[0])
+		} else {
+			c.JSON(http.StatusOK, gin.H{"message": "No foods found"})
+		}
 	}
 }
 
