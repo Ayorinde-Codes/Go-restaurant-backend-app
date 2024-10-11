@@ -116,7 +116,7 @@ func UpdateOrder() gin.HandlerFunc {
 
 		orderID := c.Param("order_id")
 
-		filter := bson.M{"invoice_id": orderID}
+		filter := bson.M{"order_id": orderID}
 
 		if err := c.BindJSON(&order); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
