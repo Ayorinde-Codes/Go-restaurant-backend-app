@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"golang-restaurant-backend-app/database"
+	"golang-restaurant-backend-app/models"
 	"net/http"
 	"time"
 
@@ -36,8 +37,20 @@ func GetUsers() gin.HandlerFunc {
 
 func GetUser() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// id := c.Param("id")
-		// todo: get user by id
+		var ctx, cancel = context.WithTimeout(context.Background(), 100*time.Second)
+
+		userId := c.Param("user_id")
+
+		var user models.Table
+
+		err := userCollection.FindOne(ctx, bson.M{"user_id": userId}).Decode(&user)
+
+		defer cancel()
+
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "error occured while fetching the user"})
+		}
+		c.JSON(http.StatusOK, user)
 	}
 }
 func SignUp() gin.HandlerFunc {
