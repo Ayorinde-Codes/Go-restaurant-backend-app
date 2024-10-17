@@ -4,8 +4,8 @@ import (
 	"os"
 
 	"golang-restaurant-backend-app/database"
-	"golang-restaurant-backend-app/middleware"
-	"golang-restaurant-backend-app/routes"
+	middleware "golang-restaurant-backend-app/middleware"
+	routes "golang-restaurant-backend-app/routes"
 
 	"go.mongodb.org/mongo-driver/mongo"
 
