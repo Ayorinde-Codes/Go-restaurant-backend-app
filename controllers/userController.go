@@ -2,7 +2,6 @@ package controller
 
 import (
 	"context"
-	"fmt"
 	"golang-restaurant-backend-app/database"
 	helper "golang-restaurant-backend-app/helpers"
 	"golang-restaurant-backend-app/models"
@@ -93,70 +92,75 @@ func GetUser() gin.HandlerFunc {
 		c.JSON(http.StatusOK, user)
 	}
 }
+
 func SignUp() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var ctx, cancel = context.WithTimeout(context.Background(), 100*time.Second)
 		defer cancel()
+
 		var user models.User
 
+		// Bind and validate user input
 		if err := c.BindJSON(&user); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
 
 		validatorErr := validate.Struct(user)
-
 		if validatorErr != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": validatorErr.Error()})
 			return
 		}
 
-		count, err := userCollection.CountDocuments(ctx, bson.M{"email": user.Email})
-
+		// Check if email or phone number already exists
+		emailOrPhoneExists, err := userCollection.CountDocuments(ctx, bson.M{
+			"$or": []bson.M{
+				{"email": user.Email},
+				{"phone": user.Phone},
+			},
+		})
 		if err != nil {
 			log.Panic(err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "error occured while chehcking for email"})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Error occurred while checking for existing user"})
+			return
+		}
+		if emailOrPhoneExists > 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Email or phone number already exists"})
 			return
 		}
 
+		// Hash the password
 		password := HashPassword(*user.Password)
-
 		user.Password = &password
 
-		count, err := userCollection.CountDocuments(ctx, bson.M{"phone": user.Phone})
-
-		if err != nil {
-			log.Panic(err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "error occured while chehcking for phone number"})
-			return
-		}
-
-		if count > 0 {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "email or phone number already exists"})
-			return
-		}
-
+		// Set user metadata
 		user.Created_at, _ = time.Parse(time.RFC3339, time.Now().Format(time.RFC3339))
 		user.Updated_at, _ = time.Parse(time.RFC3339, time.Now().Format(time.RFC3339))
 		user.ID = primitive.NewObjectID()
 		user.User_id = user.ID.Hex()
 
-		token, refreshToken, _ := helper.GenerateAllTokens(*user.Email, *user.First_name, *user.Last_name, user.User_id)
+		// Generate JWT tokens
+		token, refreshToken, tokenErr := helper.GenerateAllTokens(*user.Email, *user.First_name, *user.Last_name, user.User_id)
+		if tokenErr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate tokens"})
+			return
+		}
 
 		user.Token = &token
 		user.Refresh_Token = &refreshToken
 
-		result, insertErr := foodCollection.InsertOne(ctx, food)
-
+		// Insert user into database
+		result, insertErr := userCollection.InsertOne(ctx, user)
 		if insertErr != nil {
-			msg := fmt.Sprintf("User item was not created")
-			c.JSON(http.StatusInternalServerError, gin.H{"error": msg})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "User was not created"})
 			return
 		}
-		defer cancel()
+
+		// Return successful response
 		c.JSON(http.StatusOK, result)
 	}
 }
+
 func Login() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// todo: login user
