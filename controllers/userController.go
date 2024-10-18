@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"golang-restaurant-backend-app/database"
 	helper "golang-restaurant-backend-app/helpers"
 	"golang-restaurant-backend-app/models"
@@ -14,6 +15,7 @@ import (
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
+	"golang.org/x/crypto/bcrypt"
 )
 
 var userCollection *mongo.Collection = database.OpenCollection(database.Client, "user")
@@ -163,14 +165,58 @@ func SignUp() gin.HandlerFunc {
 
 func Login() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// todo: login user
+		var ctx, cancel = context.WithTimeout(context.Background(), 100*time.Second)
+		defer cancel()
+
+		var user models.User
+
+		var foundUser models.User
+
+		// Bind and validate user input
+		if err := c.BindJSON(&user); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+
+		err := userCollection.FindOne(ctx, bson.M{"email": user.Email}).Decode(&foundUser)
+
+		if err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "User not found"})
+			return
+		}
+
+		passwordIsValid, msg := VerifyPassword(*user.Password, *foundUser.Password)
+
+		if passwordIsValid != true {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": msg})
+			return
+		}
+
+		token, refreshToken, _ := helper.GenerateAllTokens(*foundUser.Email, *&foundUser.First_name, *&foundUser.Last_name, foundUser.User_id)
+
+		helper.UpdateAllTokens(token, refreshToken, founduser.user_id)
+
+		c.JSON(http.StatusOK, foundUser)
 	}
 }
 
 func HashPassword(password string) string {
-	// todo: hash password
+	bytes, err := bcrypt.GenerateFromPassword([]byte(password), 14)
+	if err != nil {
+		log.Println(err)
+	}
+	return string(bytes)
+
 }
 
-func VerifyPassword(usePassword string, providePassword string) (bool, string) {
+func VerifyPassword(userPassword string, providedPassword string) (bool, string) {
+	err := bcrypt.CompareHashAndPassword([]byte(providedPassword), []byte(userPassword))
+	check := true
+	msg := ""
 
+	if err != nil {
+		msg = fmt.Sprintf("login or password is incorrect")
+		check = false
+	}
+	return check, msg
 }
