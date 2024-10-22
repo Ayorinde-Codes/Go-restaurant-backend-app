@@ -2,9 +2,8 @@ package controller
 
 import (
 	"context"
-	"fmt"
 	"golang-restaurant-backend-app/database"
-	helper "golang-restaurant-backend-app/helpers"
+	helper "golang-restaurant-backend-app/helper"
 	"golang-restaurant-backend-app/models"
 	"log"
 	"net/http"
@@ -23,38 +22,38 @@ var userCollection *mongo.Collection = database.OpenCollection(database.Client, 
 func GetUsers() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var ctx, cancel = context.WithTimeout(context.Background(), 100*time.Second)
-
 		defer cancel()
 
+		// Default pagination values
 		recordPerPage, err := strconv.Atoi(c.Query("recordPerPage"))
-
 		if err != nil || recordPerPage < 1 {
 			recordPerPage = 10
 		}
 
-		page, err1 := strconv.Atoi(c.Query("page"))
-		if err1 != nil || page < 1 {
+		page, err := strconv.Atoi(c.Query("page"))
+		if err != nil || page < 1 {
 			page = 1
 		}
 
+		// Calculate start index for pagination
 		startIndex := (page - 1) * recordPerPage
-
-		startIndex, err = strconv.Atoi(c.Query("startIndex"))
 
 		// MongoDB aggregation pipeline stages
 		matchStage := bson.D{{Key: "$match", Value: bson.D{}}}
-
+		skipStage := bson.D{{Key: "$skip", Value: startIndex}}
+		limitStage := bson.D{{Key: "$limit", Value: recordPerPage}}
 		projectStage := bson.D{{Key: "$project", Value: bson.D{
-			{Key: "_id", Value: 0},
-			{Key: "total_count", Value: 1},
-			{Key: "user_items", Value: bson.D{
-				{Key: "$slice", Value: []interface{}{"$data", startIndex, recordPerPage}},
-			}},
+			{Key: "_id", Value: 0}, // Exclude MongoDB's default "_id" field
+			{Key: "email", Value: 1},
+			{Key: "first_name", Value: 1},
+			{Key: "last_name", Value: 1},
+			{Key: "created_at", Value: 1},
+			{Key: "updated_at", Value: 1},
 		}}}
 
 		// Perform aggregation
 		result, err := userCollection.Aggregate(ctx, mongo.Pipeline{
-			matchStage, projectStage,
+			matchStage, skipStage, limitStage, projectStage,
 		})
 
 		if err != nil {
@@ -62,14 +61,16 @@ func GetUsers() gin.HandlerFunc {
 			return // Exit early if aggregation fails
 		}
 
+		// Decode aggregation results into a slice of maps
 		var allUsers []bson.M
 		if err = result.All(ctx, &allUsers); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
 		}
 
 		// Return response
 		if len(allUsers) > 0 {
-			c.JSON(http.StatusOK, allUsers[0])
+			c.JSON(http.StatusOK, allUsers)
 		} else {
 			c.JSON(http.StatusOK, gin.H{"message": "No users found"})
 		}
@@ -166,10 +167,9 @@ func SignUp() gin.HandlerFunc {
 func Login() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var ctx, cancel = context.WithTimeout(context.Background(), 100*time.Second)
-		defer cancel()
+		defer cancel() // Ensure the context is cancelled after the function executes
 
 		var user models.User
-
 		var foundUser models.User
 
 		// Bind and validate user input
@@ -178,25 +178,39 @@ func Login() gin.HandlerFunc {
 			return
 		}
 
+		// Find user by email
 		err := userCollection.FindOne(ctx, bson.M{"email": user.Email}).Decode(&foundUser)
-
 		if err != nil {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "User not found"})
 			return
 		}
 
+		// Verify password
 		passwordIsValid, msg := VerifyPassword(*user.Password, *foundUser.Password)
-
-		if passwordIsValid != true {
+		if !passwordIsValid {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": msg})
 			return
 		}
 
-		token, refreshToken, _ := helper.GenerateAllTokens(*foundUser.Email, *&foundUser.First_name, *&foundUser.Last_name, foundUser.User_id)
+		// Generate tokens
+		token, refreshToken, err := helper.GenerateAllTokens(*foundUser.Email, *foundUser.First_name, *foundUser.Last_name, foundUser.User_id)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate tokens"})
+			return
+		}
 
-		helper.UpdateAllTokens(token, refreshToken, founduser.user_id)
+		// Update tokens in the database
+		helper.UpdateAllTokens(token, refreshToken, foundUser.User_id)
 
-		c.JSON(http.StatusOK, foundUser)
+		// Exclude sensitive information before returning the user data
+		foundUser.Password = nil
+
+		// Return the user and tokens
+		c.JSON(http.StatusOK, gin.H{
+			"user":         foundUser,
+			"token":        token,
+			"refreshToken": refreshToken,
+		})
 	}
 }
 
@@ -215,7 +229,7 @@ func VerifyPassword(userPassword string, providedPassword string) (bool, string)
 	msg := ""
 
 	if err != nil {
-		msg = fmt.Sprintf("login or password is incorrect")
+		msg = "login or password is incorrect"
 		check = false
 	}
 	return check, msg
